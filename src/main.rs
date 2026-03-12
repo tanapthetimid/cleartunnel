@@ -12,7 +12,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Bind UDP socket
     let local_socket = UdpSocket::bind("0.0.0.0:0")?;
-    local_socket.set_read_timeout(Some(Duration::from_secs(5)))?;
+    local_socket.set_read_timeout(Some(Duration::from_secs(30)))?;
 
     // Resolve STUN server hostname
     let stun_server = "stun.l.google.com:19302"
