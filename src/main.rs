@@ -35,12 +35,12 @@ fn main() -> io::Result<()> {
     let message_bytes = message.as_bytes();
 
     println!("\nAttempting to hole-punch to {}...", peer_addr);
-    socket.set_read_timeout(Some(Duration::from_millis(1500)))?;
+    socket.set_read_timeout(Some(Duration::from_millis(500)))?;
     let mut buf = [0u8; 1024];
 
     // 5. Continuous send-and-listen loop to punch the NAT hole
     loop {
-        std::thread::sleep(Duration::from_millis(500));
+        std::thread::sleep(Duration::from_millis(1000));
         // Shoot a packet out to punch the NAT hole
         let _ = socket.send_to(message_bytes, &peer_addr);
 
@@ -58,6 +58,7 @@ fn main() -> io::Result<()> {
             Ok(_) => {} // Ignore stray internet background noise
             Err(e) if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut => {
                 // Timeout hit. Loop again and fire another packet.
+                println!("timeout, retrying");
                 continue;
             }
             Err(e) => return Err(e),
