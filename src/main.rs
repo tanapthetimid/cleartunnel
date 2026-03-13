@@ -1,62 +1,66 @@
-use std::net::{SocketAddr, UdpSocket, ToSocketAddrs};
-use std::time::{Duration, Instant};
-use sysinfo::System;
+use std::io::{self, Write};
+use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
+use std::time::Duration;
 use stunclient::StunClient;
+use sysinfo::System;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Kernel version
-    let kernel_version = System::kernel_version().unwrap_or(String::from("unknown kernel version"));
-    println!("Kernel version: {}", kernel_version);
+fn main() -> io::Result<()> {
+    // 1. Bind an IPv4 socket to any available local port
+    let socket = UdpSocket::bind("0.0.0.0:0")?;
 
-    // Bind local UDP socket
-    let local_socket = UdpSocket::bind("0.0.0.0:0")?;
-    local_socket.set_read_timeout(Some(Duration::from_millis(500)))?;
-
-    // Resolve STUN server
-    let stun_server = "stun.l.google.com:19302"
+    // 2. Discover our public IP:Port using Google's STUN server
+    let stun_addr = "stun.l.google.com:19302"
         .to_socket_addrs()?
-        .next()
-        .ok_or("Failed to resolve STUN server")?;
-    let client = StunClient::new(stun_server);
+        .find(|x| x.is_ipv4())
+        .expect("Failed to resolve STUN server");
+        
+    let public_addr = StunClient::new(stun_addr)
+        .query_external_address(&socket)
+        .expect("STUN query failed - check your internet connection");
 
-    // Discover public endpoint
-    let mapped_addr = client.query_external_address(&local_socket)?;
-    println!("Public endpoint discovered via STUN: {}", mapped_addr);
+    println!("=== YOUR CONNECTION DETAILS ===");
+    println!("Share this IP:Port >> {} <<", public_addr);
+    println!("===============================\n");
 
-    // Input peer address
-    println!("Enter peer's public IP:Port (e.g., 203.0.113.5:54321):");
+    // 3. Receive the peer's coordinates
+    print!("Enter peer's Public IP:Port (e.g., 198.51.100.1:4567): ");
+    io::stdout().flush()?;
     let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    let peer_addr: SocketAddr = input.trim().parse()?;
+    io::stdin().read_line(&mut input)?;
+    let peer_addr: SocketAddr = input.trim().parse().expect("Invalid IP:Port format");
 
-    let message = format!("Hello from kernel {}", kernel_version);
-    let start = Instant::now();
+    // 4. Create payload with the system's kernel version
+    let kernel = System::kernel_version().unwrap_or_else(|| "Unknown".to_string());
+    let message = format!("Hello! My Linux kernel version is {}", kernel);
+    let message_bytes = message.as_bytes();
 
+    println!("\nAttempting to hole-punch to {}...", peer_addr);
+    socket.set_read_timeout(Some(Duration::from_millis(1500)))?;
     let mut buf = [0u8; 1024];
-    println!("Starting hole punching. Press Ctrl+C to exit.");
 
+    // 5. Continuous send-and-listen loop to punch the NAT hole
     loop {
-        // Send a packet every 500ms
-        local_socket.send_to(message.as_bytes(), peer_addr)?;
+        // Shoot a packet out to punch the NAT hole
+        let _ = socket.send_to(message_bytes, &peer_addr);
 
-        // Try to receive
-        match local_socket.recv_from(&mut buf) {
-            Ok((n, addr)) => {
-                let received = String::from_utf8_lossy(&buf[..n]);
-                println!("Received from {}: {}", addr, received);
+        // Listen for the peer's incoming packet
+        match socket.recv_from(&mut buf) {
+            Ok((size, src)) if src == peer_addr => {
+                println!(">>> CONNECTION ESTABLISHED <<<");
+                println!("Received from [{}]:", src);
+                println!("{}", String::from_utf8_lossy(&buf[..size]));
+                
+                // Final ACK to ensure their loop closes too
+                let _ = socket.send_to(message_bytes, &peer_addr); 
                 break;
             }
-            Err(_) => {
-                // Timeout, keep punching
+            Ok(_) => {} // Ignore stray internet background noise
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut => {
+                // Timeout hit. Loop again and fire another packet.
+                continue;
             }
+            Err(e) => return Err(e),
         }
-
-        if start.elapsed().as_secs() > 30 {
-            println!("Timeout after 30 seconds. Try sending from both sides simultaneously.");
-            break;
-        }
-
-        std::thread::sleep(Duration::from_millis(500));
     }
 
     Ok(())
