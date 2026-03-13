@@ -40,6 +40,7 @@ fn main() -> io::Result<()> {
 
     // 5. Continuous send-and-listen loop to punch the NAT hole
     loop {
+        std::thread::sleep(Duration::from_millis(500));
         // Shoot a packet out to punch the NAT hole
         let _ = socket.send_to(message_bytes, &peer_addr);
 
@@ -52,7 +53,7 @@ fn main() -> io::Result<()> {
                 
                 // Final ACK to ensure their loop closes too
                 let _ = socket.send_to(message_bytes, &peer_addr); 
-                break;
+                continue;
             }
             Ok(_) => {} // Ignore stray internet background noise
             Err(e) if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut => {
