@@ -1,20 +1,18 @@
 use std::net::{SocketAddr, UdpSocket, ToSocketAddrs};
-use std::time::Duration;
-use std::error::Error;
-
+use std::time::{Duration, Instant};
 use sysinfo::System;
 use stunclient::StunClient;
 
-fn main() -> Result<(), Box<dyn Error>> {
-    // Get kernel version
-    let kernel_version = System::kernel_version().unwrap_or(String::from("Unknown Kernel Version"));
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Kernel version
+    let kernel_version = System::kernel_version().unwrap_or(String::from("unknown kernel version"));
     println!("Kernel version: {}", kernel_version);
 
-    // Bind UDP socket
+    // Bind local UDP socket
     let local_socket = UdpSocket::bind("0.0.0.0:0")?;
-    local_socket.set_read_timeout(Some(Duration::from_secs(30)))?;
+    local_socket.set_read_timeout(Some(Duration::from_millis(500)))?;
 
-    // Resolve STUN server hostname
+    // Resolve STUN server
     let stun_server = "stun.l.google.com:19302"
         .to_socket_addrs()?
         .next()
@@ -25,25 +23,40 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mapped_addr = client.query_external_address(&local_socket)?;
     println!("Public endpoint discovered via STUN: {}", mapped_addr);
 
-    // Hole punching: input peer address
+    // Input peer address
     println!("Enter peer's public IP:Port (e.g., 203.0.113.5:54321):");
     let mut input = String::new();
     std::io::stdin().read_line(&mut input)?;
-    let peer_addr: SocketAddr = input.trim().parse()
-        .map_err(|_| "Invalid peer address format. Use IP:Port")?;
+    let peer_addr: SocketAddr = input.trim().parse()?;
 
-    // Send hello message
     let message = format!("Hello from kernel {}", kernel_version);
-    local_socket.send_to(message.as_bytes(), peer_addr)?;
+    let start = Instant::now();
 
-    // Receive message
     let mut buf = [0u8; 1024];
-    match local_socket.recv_from(&mut buf) {
-        Ok((n, addr)) => {
-            let received = String::from_utf8_lossy(&buf[..n]);
-            println!("Received from {}: {}", addr, received);
+    println!("Starting hole punching. Press Ctrl+C to exit.");
+
+    loop {
+        // Send a packet every 500ms
+        local_socket.send_to(message.as_bytes(), peer_addr)?;
+
+        // Try to receive
+        match local_socket.recv_from(&mut buf) {
+            Ok((n, addr)) => {
+                let received = String::from_utf8_lossy(&buf[..n]);
+                println!("Received from {}: {}", addr, received);
+                break;
+            }
+            Err(_) => {
+                // Timeout, keep punching
+            }
         }
-        Err(e) => println!("No message received (timeout or error): {}", e),
+
+        if start.elapsed().as_secs() > 30 {
+            println!("Timeout after 30 seconds. Try sending from both sides simultaneously.");
+            break;
+        }
+
+        std::thread::sleep(Duration::from_millis(500));
     }
 
     Ok(())
