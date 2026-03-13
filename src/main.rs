@@ -6,10 +6,15 @@ use sysinfo::System;
 
 fn main() -> io::Result<()> {
     // 1. Bind an IPv4 socket to any available local port
-    let socket = UdpSocket::bind("0.0.0.0:0")?;
+    let socket = UdpSocket::bind("0.0.0.0:25566")?;
+
+    dbg!(&socket);
+
+    let stun1 = "stun.l.google.com:19302";
+    let stun2 = "stun.nextcloud.com:3478";
 
     // 2. Discover our public IP:Port using Google's STUN server
-    let stun_addr = "stun.l.google.com:19302"
+    let stun_addr = stun2
         .to_socket_addrs()?
         .find(|x| x.is_ipv4())
         .expect("Failed to resolve STUN server");
